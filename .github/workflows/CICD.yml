@@ -46,7 +46,7 @@ jobs:
           python attendance.py
           
       - name: Upload output CSV
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: attendance-output
           path: output/*.csv
