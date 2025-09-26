@@ -1,28 +1,46 @@
-name: CICD Workflow
+name: CID
 
 on:
-  push:        # Run when you push to repo
-    branches:
-      - main   # or master, depending on your repo
-  pull_request:  # Run on pull requests too
+  workflow_dispatch:   # manual run
+  schedule:
+    - cron: "0 3 * * *"   # runs daily at 3 AM UTC
 
 jobs:
-  build:
-    runs-on: ubuntu-latest   # VM type (Linux, Windows, macOS)
+  run-script:
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3   # Get your repo files
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.10"    # Set Python version
+          python-version: "3.10"
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          pip install requests paramiko python-dotenv pandas
 
       - name: Run script
+        env:
+          KEKA_URL: ${{ secrets.KEKA_URL }}
+          CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+          GRANT_TYPE: ${{ secrets.GRANT_TYPE }}
+          SCOPE: ${{ secrets.SCOPE }}
+          API_KEY: ${{ secrets.API_KEY }}
+          API_KEY_ATTENDANCE: ${{ secrets.API_KEY_ATTENDANCE }}
+          FTP_HOST_NAME: ${{ secrets.FTP_HOST_NAME }}
+          FTP_PORT: ${{ secrets.FTP_PORT }}
+          FTP_USER_NAME: ${{ secrets.FTP_USER_NAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          TEMPLATE_FILE_PATH_DICE: Dice_SFTP_Template.csv
+          TEMPLATE_FILE_PATH: SFTP_File-Nephrocare-27dec.csv
+          ATT_TEMPLATE_FILE_PATH: Attendance.csv
+          TARGET_FILE_PATH: output
+          PEM_PATH: nephroplus.ppk
         run: |
-          python attendance.py
+          mkdir -p output
+          python Attendance.py
