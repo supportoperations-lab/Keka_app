@@ -43,4 +43,4 @@ jobs:
           PEM_PATH: nephroplus.ppk
         run: |
           mkdir -p output
-          python Attendance.py
+          python attendance.py
