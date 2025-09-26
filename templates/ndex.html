@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Streaming Progress</title>
+</head>
+<body>
+    <h2>Employee Data Fetching Progress</h2>
+    <div id="status">Waiting for updates...</div>
+
+    <script>
+        const eventSource = new EventSource("/stream");
+
+        eventSource.onmessage = function (event) {
+            document.getElementById("status").innerText = event.data;
+        };
+
+        eventSource.onerror = function () {
+            document.getElementById("status").innerText = "Connection lost ❌";
+            eventSource.close();
+        };
+    </script>
+</body>
+</html>
