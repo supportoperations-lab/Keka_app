@@ -4,6 +4,8 @@ import requests
 #import paramiko
 from datetime import datetime
 #from dotenv import load_dotenv
+from google.cloud import bigquery
+from google.oauth2 import bigquery
 import pandas as pd
 import time
 
@@ -18,6 +20,12 @@ TARGET_FILE_PATH = os.getenv("TARGET_FILE_PATH", "output")  # output folder insi
 PEM_PATH = os.getenv("PEM_PATH", "nephroplus.ppk")
 FTP_FOLDER = os.getenv("FTP_FOLDER", "Nephrocare")
 FTP_FOLDER_DICE = os.getenv("FTP_FOLDER_DICE", "nephroplus_hrms")
+
+# === GCP/BigQuery variables ===
+GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID")
+GCP_DATASET = os.getenv("GCP_DATASET")
+GCP_TABLE = os.getenv("GCP_TABLE")
+GCP_CREDENTIALS = os.getenv("GCP_CREDENTIALS")
 
 # Ensure output folder exists
 os.makedirs(TARGET_FILE_PATH, exist_ok=True)
@@ -177,7 +185,22 @@ def get_employee_attendance(employee_data, access_token):
     df_template.to_csv(output_file_path, index=False)
     print(f"Attendance file saved at: {output_file_path}")
 
+    if GCP_PROJECT_ID and GCP_DATASET and GCP_TABLE and GCP_CREDENTIALS:
+        key_path = "gcp_key.json"
+        with open(key_path, "w") as f:
+            f.write(GCP_CREDENTIALS)
 
+        credentials = service_account.Credentials.from_service_account_file(key_path)
+        client = bigquery.Client(credentials=credentials, project=GCP_PROJECT_ID)
+
+        table_ref = f"{GCP_PROJECT_ID}.{GCP_DATASET}.{GCP_TABLE}"
+        job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
+
+        job = client.load_table_from_dataframe(df_template, table_ref, job_config=job_config)
+        job.result()
+
+        print(f"✅ Appended {len(df_template)} rows to {table_ref}")
+        
 def main():
     api_key = os.getenv('API_KEY')
     api_key_attendance = os.getenv('API_KEY_ATTENDANCE')
