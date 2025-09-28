@@ -43,7 +43,7 @@ jobs:
           PEM_PATH: nephroplus.ppk
           GCP_PROJECT_ID: attendance-etl
           GCP_DATASET: employee_attendance
-          GCP_CREDENTIALS: 
+          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
         run: |
           mkdir -p output
           python attendance.py
