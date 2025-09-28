@@ -5,7 +5,7 @@ import requests
 from datetime import datetime
 #from dotenv import load_dotenv
 from google.cloud import bigquery
-from google.oauth2 import bigquery
+from google.oauth2 import service_account
 import pandas as pd
 import time
 
