@@ -1,31 +1,24 @@
 import json
 import os
 import requests
-#import paramiko
 from datetime import datetime
-#from dotenv import load_dotenv
-from google.cloud import bigquery
 from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 import pandas as pd
 import time
 
-# Load .env if exists locally (not needed in GitHub Actions as we use secrets)
-#load_dotenv()
-
-# Paths (repo relative)
+# === File paths ===
 TEMPLATE_FILE_PATH_DICE = os.getenv("TEMPLATE_FILE_PATH_DICE", "Dice_SFTP_Template.csv")
 TEMPLATE_FILE_PATH = os.getenv("TEMPLATE_FILE_PATH", "SFTP_File-Nephrocare-27dec.csv")
 ATT_TEMPLATE_FILE_PATH = os.getenv("ATT_TEMPLATE_FILE_PATH", "Attendance.csv")
 TARGET_FILE_PATH = os.getenv("TARGET_FILE_PATH", "output")  # output folder inside repo
-PEM_PATH = os.getenv("PEM_PATH", "nephroplus.ppk")
 FTP_FOLDER = os.getenv("FTP_FOLDER", "Nephrocare")
 FTP_FOLDER_DICE = os.getenv("FTP_FOLDER_DICE", "nephroplus_hrms")
 
-# === GCP/BigQuery variables ===
-GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID")
-GCP_DATASET = os.getenv("GCP_DATASET")
-GCP_TABLE = os.getenv("GCP_TABLE")
-GCP_CREDENTIALS = os.getenv("GCP_CREDENTIALS")
+# === Google Drive variables ===
+GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID")  # Folder ID from Google Drive
+GCP_CREDENTIALS = os.getenv("GCP_CREDENTIALS")    # Service account JSON as string
 
 # Ensure output folder exists
 os.makedirs(TARGET_FILE_PATH, exist_ok=True)
@@ -91,11 +84,6 @@ def call_second_api(access_token):
             break
 
 
-def extract_band_value(band_info):
-    parts = band_info.split()
-    return parts[1] if len(parts) > 1 else None
-
-
 def convert_timestamp(timestamp):
     if timestamp and isinstance(timestamp, str):
         try:
@@ -103,6 +91,25 @@ def convert_timestamp(timestamp):
         except ValueError:
             return ""
     return ""
+
+
+def upload_to_drive(file_path, file_name):
+    """Uploads the file to Google Drive inside the given folder."""
+    key_path = "gcp_key.json"
+    with open(key_path, "w") as f:
+        f.write(GCP_CREDENTIALS)
+
+    creds = service_account.Credentials.from_service_account_file(key_path, scopes=["https://www.googleapis.com/auth/drive"])
+    service = build("drive", "v3", credentials=creds)
+
+    file_metadata = {
+        "name": file_name,
+        "parents": [GDRIVE_FOLDER_ID] if GDRIVE_FOLDER_ID else []
+    }
+    media = MediaFileUpload(file_path, mimetype="text/csv")
+
+    uploaded_file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+    print(f"✅ File uploaded to Drive with ID: {uploaded_file.get('id')}")
 
 
 def get_employee_attendance(employee_data, access_token):
@@ -181,26 +188,15 @@ def get_employee_attendance(employee_data, access_token):
             df_template.iloc[i, j] = value
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file_path = os.path.join(TARGET_FILE_PATH, f"att_{start_date}_{end_date}_{timestamp}.csv")
+    output_file_name = f"att_{start_date}_{end_date}_{timestamp}.csv"
+    output_file_path = os.path.join(TARGET_FILE_PATH, output_file_name)
     df_template.to_csv(output_file_path, index=False)
     print(f"Attendance file saved at: {output_file_path}")
 
-    if GCP_PROJECT_ID and GCP_DATASET and GCP_TABLE and GCP_CREDENTIALS:
-        key_path = "gcp_key.json"
-        with open(key_path, "w") as f:
-            f.write(GCP_CREDENTIALS)
+    # Upload to Google Drive
+    upload_to_drive(output_file_path, output_file_name)
 
-        credentials = service_account.Credentials.from_service_account_file(key_path)
-        client = bigquery.Client(credentials=credentials, project=GCP_PROJECT_ID)
 
-        table_ref = f"{GCP_PROJECT_ID}.{GCP_DATASET}.{GCP_TABLE}"
-        job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
-
-        job = client.load_table_from_dataframe(df_template, table_ref, job_config=job_config)
-        job.result()
-
-        print(f"✅ Appended {len(df_template)} rows to {table_ref}")
-        
 def main():
     api_key = os.getenv('API_KEY')
     api_key_attendance = os.getenv('API_KEY_ATTENDANCE')
