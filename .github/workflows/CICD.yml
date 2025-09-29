@@ -22,7 +22,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install requests python-dotenv pandas google-auth google-api-python-client google-auth-httplib2 google-auth-oauthlib
-
+      
+      - name: Prepare GCP credentials
+        run: |
+          echo "${GCP_CREDENTIALS}" > gcp_key.json
+        env:
+          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+      
       - name: Run script
         env:
           KEKA_URL: ${{ secrets.KEKA_URL }}
