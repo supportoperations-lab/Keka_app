@@ -18,10 +18,11 @@ FTP_FOLDER_DICE = os.getenv("FTP_FOLDER_DICE", "nephroplus_hrms")
 
 # === Google Drive variables ===
 GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID")  # Folder ID from Google Drive
-GCP_CREDENTIALS = os.getenv("GCP_CREDENTIALS")    # Service account JSON as string
+SERVICE_ACCOUNT_FILE = os.getenv("SERVICE_ACCOUNT_FILE", "gcp_key.json")  # Path to service account file
 
 # Ensure output folder exists
 os.makedirs(TARGET_FILE_PATH, exist_ok=True)
+
 
 def fetch_access_token(api_key_attendance):
     url = os.getenv('KEKA_URL')
@@ -29,7 +30,6 @@ def fetch_access_token(api_key_attendance):
     client_secret = os.getenv('CLIENT_SECRET')
     grant_type = os.getenv('GRANT_TYPE')
     scope = os.getenv('SCOPE')
-    api_key = os.getenv('API_KEY')
 
     payload = (
         f"grant_type={grant_type}&"
@@ -51,10 +51,10 @@ def fetch_access_token(api_key_attendance):
             token_data = response.json()
             return token_data.get("access_token")
         else:
-            print(f"Failed to retrieve token. Status code: {response.status_code}, Response: {response.text}")
+            print(f"❌ Failed to retrieve token. Status code: {response.status_code}, Response: {response.text}")
             return None
     except requests.exceptions.RequestException as e:
-        print("Request failed:", e)
+        print("❌ Request failed:", e)
         return None
 
 
@@ -80,7 +80,7 @@ def call_second_api(access_token):
             page += 1
             time.sleep(2)
         else:
-            print(f"Failed to fetch employee data. Status code: {response.status_code}, Response: {response.text}")
+            print(f"❌ Failed to fetch employee data. Status code: {response.status_code}, Response: {response.text}")
             break
 
 
@@ -95,21 +95,22 @@ def convert_timestamp(timestamp):
 
 def upload_to_drive(file_path, file_name):
     """Uploads the file to Google Drive inside the given folder."""
-    key_path = "gcp_key.json"
-    with open(key_path, "w") as f:
-        f.write(GCP_CREDENTIALS)
+    try:
+        creds = service_account.Credentials.from_service_account_file(
+            SERVICE_ACCOUNT_FILE,
+            scopes=["https://www.googleapis.com/auth/drive"]
+        )
+        service = build("drive", "v3", credentials=creds)
 
-    creds = service_account.Credentials.from_service_account_file(key_path, scopes=["https://www.googleapis.com/auth/drive"])
-    service = build("drive", "v3", credentials=creds)
+        file_metadata = {"name": file_name}
+        if GDRIVE_FOLDER_ID:
+            file_metadata["parents"] = [GDRIVE_FOLDER_ID]
 
-    file_metadata = {
-        "name": file_name,
-        "parents": [GDRIVE_FOLDER_ID] if GDRIVE_FOLDER_ID else []
-    }
-    media = MediaFileUpload(file_path, mimetype="text/csv")
-
-    uploaded_file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-    print(f"✅ File uploaded to Drive with ID: {uploaded_file.get('id')}")
+        media = MediaFileUpload(file_path, mimetype="text/csv")
+        uploaded_file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+        print(f"✅ File uploaded to Drive with ID: {uploaded_file.get('id')}")
+    except Exception as e:
+        print(f"❌ Google Drive upload failed: {e}")
 
 
 def get_employee_attendance(employee_data, access_token):
@@ -140,9 +141,9 @@ def get_employee_attendance(employee_data, access_token):
                 result = response.json()
                 employee_attendance_data.extend(result.get("data", []))
             else:
-                print(f"Failed to fetch attendance for {employee.get('employeeNumber')}")
+                print(f"❌ Failed to fetch attendance for {employee.get('employeeNumber')}")
         except Exception as e:
-            print(f"Error fetching attendance: {e}")
+            print(f"❌ Error fetching attendance: {e}")
         time.sleep(1.5)
 
     for att in employee_attendance_data:
@@ -191,7 +192,7 @@ def get_employee_attendance(employee_data, access_token):
     output_file_name = f"att_{start_date}_{end_date}_{timestamp}.csv"
     output_file_path = os.path.join(TARGET_FILE_PATH, output_file_name)
     df_template.to_csv(output_file_path, index=False)
-    print(f"Attendance file saved at: {output_file_path}")
+    print(f"📂 Attendance file saved at: {output_file_path}")
 
     # Upload to Google Drive
     upload_to_drive(output_file_path, output_file_name)
@@ -207,10 +208,10 @@ def main():
     if list_access_token and att_access_token:
         api_response = call_second_api(list_access_token)
         if api_response:
-            print(f"Fetched employee data: {len(api_response)}")
+            print(f"✅ Fetched employee data: {len(api_response)}")
             get_employee_attendance(api_response, att_access_token)
     else:
-        print("Failed to obtain access tokens.")
+        print("❌ Failed to obtain access tokens.")
 
 
 if __name__ == "__main__":
