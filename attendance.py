@@ -94,7 +94,7 @@ def convert_timestamp(timestamp):
 
 
 def upload_to_drive(file_path, file_name):
-    """Uploads the file to Google Drive inside the given folder."""
+    """Uploads the file to Google Drive (Shared Drive)."""
     try:
         creds = service_account.Credentials.from_service_account_file(
             SERVICE_ACCOUNT_FILE,
@@ -107,8 +107,16 @@ def upload_to_drive(file_path, file_name):
             file_metadata["parents"] = [GDRIVE_FOLDER_ID]
 
         media = MediaFileUpload(file_path, mimetype="text/csv")
-        uploaded_file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-        print(f"✅ File uploaded to Drive with ID: {uploaded_file.get('id')}")
+
+        uploaded_file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id",
+            supportsAllDrives=True  # 🔹 Required for Shared Drives
+        ).execute()
+
+        print(f"✅ File uploaded to Shared Drive with ID: {uploaded_file.get('id')}")
+
     except Exception as e:
         print(f"❌ Google Drive upload failed: {e}")
 
