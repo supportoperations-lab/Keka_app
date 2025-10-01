@@ -169,6 +169,8 @@ def get_employee_attendance(employee_data, access_token, start_date=None, end_da
         data_to_write.append([
             att.get("id"),
             employeeNumber,
+            first_name,
+            last_name,
             group_title,
             employee_info.get('jobTitle', {}).get('title', '') if employee_info else "",
             att.get("attendanceDate"),
@@ -188,7 +190,7 @@ def get_employee_attendance(employee_data, access_token, start_date=None, end_da
 
     df_template = pd.read_csv(ATT_TEMPLATE_FILE_PATH)
     rows_needed = len(data_to_write)
-    columns_count = 17
+    columns_count = 19
 
     if len(df_template) < rows_needed:
         additional_rows = rows_needed - len(df_template)
