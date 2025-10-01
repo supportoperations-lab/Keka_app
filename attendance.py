@@ -138,7 +138,7 @@ def get_employee_attendance(employee_data, access_token, start_date=None, end_da
         key=lambda e: e.get("employeeNumber", "")
     )
 
-    employee_data = employee_data[:5]
+    employee_data = employee_data[]
 
     headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
     employee_attendance_data = []
