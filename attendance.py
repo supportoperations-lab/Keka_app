@@ -166,6 +166,9 @@ def get_employee_attendance(employee_data, access_token, start_date=None, end_da
             groups = employee_info.get('groups', [])
             group_title = next((g['title'] for g in groups if g.get('groupType') == 3), None)
 
+        first_name = employee_info.get("firstName", "") if employee_info else ""
+        last_name = employee_info.get("lastName", "") if employee_info else ""
+        
         first_in = att.get("firstInOfTheDay")
         last_out = att.get("lastOutOfTheDay")
         data_to_write.append([
