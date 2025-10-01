@@ -1,7 +1,7 @@
 import json
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -121,9 +121,11 @@ def upload_to_drive(file_path, file_name):
         print(f"❌ Google Drive upload failed: {e}")
 
 
-def get_employee_attendance(employee_data, access_token):
-    start_date = "2025-09-21"
-    end_date = "2025-09-21"
+def get_employee_attendance(employee_data, access_token, start_date=None, end_date=None):
+    if not start_date or not end_date:
+        yesterday =  (datetime.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+        start_date = yesterday
+        end_date = yesterday
     data_to_write = []
 
     # Filter employees
