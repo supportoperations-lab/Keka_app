@@ -123,9 +123,9 @@ def upload_to_drive(file_path, file_name):
 
 def get_employee_attendance(employee_data, access_token, start_date=None, end_date=None):
     if not start_date or not end_date:
-        four_days_ago =  (datetime.today() - timedelta(days=4)).strftime("%Y-%m-%d")
-        start_date = four_days_ago
-        end_date = four_days_ago
+        seven_days_ago =  (datetime.today() - timedelta(days=7)).strftime("%Y-%m-%d")
+        start_date = seven_days_ago
+        end_date = seven_days_ago
     data_to_write = []
 
     # Filter employees
