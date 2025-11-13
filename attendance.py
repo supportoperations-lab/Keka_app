@@ -9,7 +9,7 @@ from googleapiclient.discovery import build
 # ======================================
 # CONFIGURATION
 # ======================================
-KEKA_DOMAIN = "https://nephroplus.keka.com"
+KEKA_DOMAIN = "https://nephroplus.keka.com/api/v1/hris/employees"
 EMPLOYEE_API = f"{KEKA_DOMAIN}/api/v1/hris/employees"
 ATTENDANCE_API = f"{KEKA_DOMAIN}/api/v1/time/attendance"
 
