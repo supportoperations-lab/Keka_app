@@ -1,187 +1,249 @@
+import json
 import os
 import requests
-import pandas as pd
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+import pandas as pd
+import time
 
-# ======================================
-# CONFIGURATION
-# ======================================
-KEKA_DOMAIN = "https://nephroplus.keka.com/api/v1/hris/employees"
-EMPLOYEE_API = f"{KEKA_DOMAIN}/api/v1/hris/employees"
-ATTENDANCE_API = f"{KEKA_DOMAIN}/api/v1/time/attendance"
+# === File paths ===
+TEMPLATE_FILE_PATH_DICE = os.getenv("TEMPLATE_FILE_PATH_DICE", "Dice_SFTP_Template.csv")
+TEMPLATE_FILE_PATH = os.getenv("TEMPLATE_FILE_PATH", "SFTP_File-Nephrocare-27dec.csv")
+ATT_TEMPLATE_FILE_PATH = os.getenv("ATT_TEMPLATE_FILE_PATH", "Attendance.csv")
+TARGET_FILE_PATH = os.getenv("TARGET_FILE_PATH", "output")  # output folder inside repo
+FTP_FOLDER = os.getenv("FTP_FOLDER", "Nephrocare")
+FTP_FOLDER_DICE = os.getenv("FTP_FOLDER_DICE", "nephroplus_hrms")
 
-CLIENT_ID = "YOUR_KEKA_CLIENT_ID"
-CLIENT_SECRET = "YOUR_KEKA_CLIENT_SECRET"
+# === Google Drive variables ===
+GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID")  # Folder ID from Google Drive
+SERVICE_ACCOUNT_FILE = os.getenv("SERVICE_ACCOUNT_FILE", "gcp_key.json")  # Path to service account file
 
-SERVICE_ACCOUNT_FILE = "service-account.json"  # your service account JSON key
-DRIVE_FOLDER_ID = "YOUR_GOOGLE_DRIVE_FOLDER_ID"
+# Ensure output folder exists
+os.makedirs(TARGET_FILE_PATH, exist_ok=True)
 
-# ======================================
-# FUNCTIONS
-# ======================================
 
-def get_keka_token():
-    """Get new Keka access token"""
-    url = f"{KEKA_DOMAIN}/connect/token"
-    payload = {
-        "grant_type": "client_credentials",
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET
+def fetch_access_token(api_key_attendance):
+    url = os.getenv('KEKA_URL')
+    client_id = os.getenv('CLIENT_ID')
+    client_secret = os.getenv('CLIENT_SECRET')
+    grant_type = os.getenv('GRANT_TYPE')
+    scope = os.getenv('SCOPE')
+
+    payload = (
+        f"grant_type={grant_type}&"
+        f"scope={scope}&"
+        f"client_id={client_id}&"
+        f"client_secret={client_secret}&"
+        f"api_key={api_key_attendance}"
+    )
+
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/x-www-form-urlencoded",
+        "User-Agent": "Mozilla/5.0",
     }
-    response = requests.post(url, data=payload)
-    response.raise_for_status()
-    token = response.json()["access_token"]
-    print("✅ Keka access token generated")
-    return token
+
+    try:
+        response = requests.post(url, headers=headers, data=payload)
+        if response.status_code == 200:
+            token_data = response.json()
+            return token_data.get("access_token")
+        else:
+            print(f"❌ Failed to retrieve token. Status code: {response.status_code}, Response: {response.text}")
+            return None
+    except requests.exceptions.RequestException as e:
+        print("❌ Request failed:", e)
+        return None
 
 
-def get_active_employees(token):
-    """Fetch active employees list"""
-    employees = []
-    headers = {"Authorization": f"Bearer {token}"}
+def call_second_api(access_token, employee_limit=2500):
+    """Fetch up to 'employee_limit' employees."""
+    all_employees = []
     page = 1
+    page_size = 200
+
     while True:
-        print(f"Fetching employee page {page}...")
-        response = requests.get(f"{EMPLOYEE_API}?pageNumber={page}&pageSize=100", headers=headers)
-        if response.status_code != 200:
-            print("❌ Failed to fetch employee list:", response.text)
+        emp_url = f"https://company.keka.com/api/v1/hris/employees?pageNumber={page}&pageSize={page_size}"
+        headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+
+        response = requests.get(emp_url, headers=headers)
+
+        if response.status_code == 200:
+            data = response.json()
+            employees = data.get("data", [])
+            total_pages = data.get("totalPages", 0)
+            all_employees.extend(employees)
+
+            # Print progress
+            print(f"📄 Page={page}, Total Pages={total_pages}, Total Employees Fetched={len(all_employees)}")
+
+            # Stop if we've fetched 2500 employees or more
+            if len(all_employees) >= employee_limit:
+                all_employees = all_employees[:employee_limit]
+                print(f"✅ Reached employee limit of {employee_limit}. Stopping fetch.")
+                return all_employees
+
+            # Stop if no more pages
+            if total_pages <= page:
+                break
+
+            page += 1
+            time.sleep(2)
+        else:
+            print(f"❌ Failed to fetch employee data. Status code: {response.status_code}, Response: {response.text}")
             break
 
-        data = response.json()
-        employee_data = data.get("data", [])
-        if not employee_data:
-            break
-
-        # Keep only active employees (avoid test or inactive)
-        filtered = [
-            e for e in employee_data
-            if e.get("employmentStatusName") == "Active"
-            and not str(e.get("employeeNumber", "")).startswith("TEST")
-        ]
-        employees.extend(filtered)
-
-        if not data.get("hasMore", False):
-            break
-        page += 1
-        time.sleep(1)
-    print(f"✅ Total active employees fetched: {len(employees)}")
-    return employees
+    return all_employees
 
 
-def fetch_yesterday_attendance(token, employees):
-    """Fetch attendance for yesterday (single date)"""
-    headers = {"Authorization": f"Bearer {token}"}
-    yesterday = (datetime.today() - timedelta(days=1)).strftime("%Y-%m-%d")
-
-    all_records = []
-    missing_records = []
-
-    print(f"📅 Fetching attendance for: {yesterday}")
-
-    for idx, emp in enumerate(employees, start=1):
-        emp_id = emp["employeeId"]
-        emp_num = emp["employeeNumber"]
-        url = f"{ATTENDANCE_API}?employeeIds={emp_id}&startDate={yesterday}&endDate={yesterday}"
-
-        response = requests.get(url, headers=headers)
-
-        # Handle token expiry
-        if response.status_code == 401:
-            print("⚠️ Token expired — refreshing...")
-            token = get_keka_token()
-            headers = {"Authorization": f"Bearer {token}"}
-            response = requests.get(url, headers=headers)
-
-        if response.status_code != 200:
-            print(f"❌ Failed to fetch attendance for {emp_num}")
-            continue
-
-        data = response.json().get("data", [])
-        if not data:
-            missing_records.append(emp_num)
-            continue
-
-        record = data[0]
-        first_in = record.get("firstInOfTheDay")
-        last_out = record.get("lastOutOfTheDay")
-
-        # Handle missing punches
-        if not first_in or not last_out:
-            status = record.get("status", "")
-            if status.lower() != "approved":
-                print(f"⚠️ Skipping pending/unapproved attendance for {emp_num}")
-                continue
-            missing_records.append(emp_num)
-
-        all_records.append({
-            "EmployeeNumber": emp_num,
-            "EmployeeName": emp.get("displayName"),
-            "CenterCode": emp.get("department", {}).get("name", ""),
-            "AttendanceDate": yesterday,
-            "FirstIn": first_in.get("timestamp") if first_in else None,
-            "LastOut": last_out.get("timestamp") if last_out else None,
-            "Status": record.get("status"),
-        })
-
-        # Prevent throttling
-        time.sleep(1.2)
-
-        if idx % 100 == 0:
-            print(f"Processed {idx}/{len(employees)} employees...")
-
-    print(f"✅ Attendance fetched for {len(all_records)} employees")
-    print(f"⚠️ Missing attendance for {len(missing_records)} employees")
-
-    return all_records, missing_records
+def convert_timestamp(timestamp):
+    if timestamp and isinstance(timestamp, str):
+        try:
+            return datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ").strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return ""
+    return ""
 
 
 def upload_to_drive(file_path, file_name):
-    """Upload file to Google Drive"""
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE,
-        scopes=["https://www.googleapis.com/auth/drive.file"]
-    )
-    service = build("drive", "v3", credentials=creds)
-
-    file_metadata = {"name": file_name, "parents": [DRIVE_FOLDER_ID]}
-    media = MediaFileUpload(file_path, mimetype="text/csv")
-
-    service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-    print(f"✅ Uploaded to Google Drive: {file_name}")
-
-
-# ======================================
-# MAIN EXECUTION
-# ======================================
-def main():
+    """Uploads the file to Google Drive (Shared Drive)."""
     try:
-        token = get_keka_token()
-        employees = get_active_employees(token)
+        creds = service_account.Credentials.from_service_account_file(
+            SERVICE_ACCOUNT_FILE,
+            scopes=["https://www.googleapis.com/auth/drive"]
+        )
+        service = build("drive", "v3", credentials=creds)
 
-        all_records, missing = fetch_yesterday_attendance(token, employees)
+        file_metadata = {"name": file_name}
+        if GDRIVE_FOLDER_ID:
+            file_metadata["parents"] = [GDRIVE_FOLDER_ID]
 
-        # Save to CSV
-        df = pd.DataFrame(all_records)
-        file_name = f"keka_attendance_{datetime.today().strftime('%Y%m%d')}.csv"
-        file_path = os.path.join(os.getcwd(), file_name)
-        df.to_csv(file_path, index=False)
-        print(f"📁 Attendance saved locally: {file_path}")
+        media = MediaFileUpload(file_path, mimetype="text/csv")
 
-        # Upload to Drive
-        upload_to_drive(file_path, file_name)
+        uploaded_file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id",
+            supportsAllDrives=True  # 🔹 Required for Shared Drives
+        ).execute()
 
-        # Log missing employees
-        if missing:
-            pd.DataFrame({"MissingEmployeeNumber": missing}).to_csv(
-                "missing_attendance.csv", index=False
-            )
-            print(f"⚠️ Missing data logged: missing_attendance.csv")
+        print(f"✅ File uploaded to Shared Drive with ID: {uploaded_file.get('id')}")
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Google Drive upload failed: {e}")
+
+
+def get_employee_attendance(employee_data, access_token, start_date=None, end_date=None):
+    """Fetch attendance data for the provided employees."""
+    if not start_date or not end_date:
+        yesterday = (datetime.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+        start_date = end_date = yesterday
+
+    data_to_write = []
+
+    # Filter employees
+    employee_data = sorted(
+        [
+            employee for employee in employee_data
+            if employee.get("employmentStatus") == 0
+            and employee.get("employeeNumber") not in {"TEST001", "TEST002", "TEST003", "TEST004", "TEST005"}
+        ],
+        key=lambda e: e.get("employeeNumber", "")
+    )
+
+    headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+    employee_attendance_data = []
+
+    print(f"📅 Fetching attendance for date: {start_date}")
+    for row_index, employee in enumerate(employee_data):
+        emp_id = employee.get("id")
+        emp_url = f"https://nephroplus.keka.com/api/v1/time/attendance?employeeIds={emp_id}&from={start_date}&to={end_date}"
+
+        try:
+            response = requests.get(emp_url, headers=headers)
+            if response.status_code == 200:
+                result = response.json()
+                employee_attendance_data.extend(result.get("data", []))
+            else:
+                print(f"❌ Failed to fetch attendance for {employee.get('employeeNumber')} ({response.status_code})")
+        except Exception as e:
+            print(f"❌ Error fetching attendance: {e}")
+        time.sleep(1.5)
+
+        if (row_index + 1) % 100 == 0:
+            print(f"🔹 Processed {row_index + 1} / {len(employee_data)} employees")
+
+    for att in employee_attendance_data:
+        employeeNumber = att.get("employeeNumber", "")
+        employee_info = next((rec for rec in employee_data if rec.get("employeeNumber") == employeeNumber), None)
+        group_title = None
+        if employee_info:
+            groups = employee_info.get('groups', [])
+            group_title = next((g['title'] for g in groups if g.get('groupType') == 3), None)
+
+        first_in = att.get("firstInOfTheDay")
+        last_out = att.get("lastOutOfTheDay")
+        data_to_write.append([
+            att.get("id"),
+            employeeNumber,
+            group_title,
+            employee_info.get('jobTitle', {}).get('title', '') if employee_info else "",
+            att.get("attendanceDate"),
+            att.get("shiftStartTime"),
+            att.get("shiftEndTime"),
+            convert_timestamp(first_in.get("timestamp")) if isinstance(first_in, dict) else "",
+            convert_timestamp(last_out.get("timestamp")) if isinstance(last_out, dict) else "",
+            att.get("dayType"),
+            att.get("shiftDuration"),
+            att.get("shiftEffectiveDuration"),
+            att.get("totalGrossHours"),
+            att.get("totalEffectiveHours"),
+            att.get("totalBreakDuration"),
+            att.get("totalEffectiveOvertimeDuration"),
+            att.get("totalGrossOvertimeDuration")
+        ])
+
+    df_template = pd.read_csv(ATT_TEMPLATE_FILE_PATH)
+    rows_needed = len(data_to_write)
+    columns_count = 17
+
+    if len(df_template) < rows_needed:
+        additional_rows = rows_needed - len(df_template)
+        df_template = pd.concat(
+            [df_template, pd.DataFrame([[''] * columns_count] * additional_rows, columns=df_template.columns)],
+            ignore_index=True
+        )
+
+    for i, row_data in enumerate(data_to_write):
+        for j, value in enumerate(row_data):
+            df_template.iloc[i, j] = value
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file_name = f"att_{start_date}_{end_date}_{timestamp}.csv"
+    output_file_path = os.path.join(TARGET_FILE_PATH, output_file_name)
+    df_template.to_csv(output_file_path, index=False)
+    print(f"📂 Attendance file saved at: {output_file_path}")
+
+    # Upload to Google Drive
+    upload_to_drive(output_file_path, output_file_name)
+
+
+def main():
+    api_key = os.getenv('API_KEY')
+    api_key_attendance = os.getenv('API_KEY_ATTENDANCE')
+
+    list_access_token = fetch_access_token(api_key)
+    att_access_token = fetch_access_token(api_key_attendance)
+
+    if list_access_token and att_access_token:
+        api_response = call_second_api(list_access_token, employee_limit=2500)
+        if api_response:
+            print(f"✅ Fetched employee data: {len(api_response)} employees")
+            get_employee_attendance(api_response, att_access_token)
+    else:
+        print("❌ Failed to obtain access tokens.")
 
 
 if __name__ == "__main__":
