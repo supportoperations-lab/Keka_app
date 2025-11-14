@@ -58,8 +58,7 @@ def fetch_access_token(api_key_attendance):
         return None
 
 
-def call_second_api(access_token, employee_limit=2500):
-    """Fetch up to 'employee_limit' employees."""
+def call_second_api(access_token):
     all_employees = []
     page = 1
     page_size = 200
@@ -75,27 +74,14 @@ def call_second_api(access_token, employee_limit=2500):
             employees = data.get("data", [])
             total_pages = data.get("totalPages", 0)
             all_employees.extend(employees)
-
-            # Print progress
-            print(f"📄 Page={page}, Total Pages={total_pages}, Total Employees Fetched={len(all_employees)}")
-
-            # Stop if we've fetched 2500 employees or more
-            if len(all_employees) >= employee_limit:
-                all_employees = all_employees[:employee_limit]
-                print(f"✅ Reached employee limit of {employee_limit}. Stopping fetch.")
-                return all_employees
-
-            # Stop if no more pages
+            print(f"page={page}, total pages={total_pages}, time={datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             if total_pages <= page:
-                break
-
+                return all_employees
             page += 1
             time.sleep(2)
         else:
             print(f"❌ Failed to fetch employee data. Status code: {response.status_code}, Response: {response.text}")
             break
-
-    return all_employees
 
 
 def convert_timestamp(timestamp):
@@ -136,11 +122,10 @@ def upload_to_drive(file_path, file_name):
 
 
 def get_employee_attendance(employee_data, access_token, start_date=None, end_date=None):
-    """Fetch attendance data for the provided employees."""
     if not start_date or not end_date:
-        yesterday = (datetime.today() - timedelta(days=1)).strftime("%Y-%m-%d")
-        start_date = end_date = yesterday
-
+        seven_days_ago =  (datetime.today() - timedelta(days=2)).strftime("%Y-%m-%d")
+        start_date = seven_days_ago
+        end_date = seven_days_ago
     data_to_write = []
 
     # Filter employees
@@ -156,7 +141,6 @@ def get_employee_attendance(employee_data, access_token, start_date=None, end_da
     headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
     employee_attendance_data = []
 
-    print(f"📅 Fetching attendance for date: {start_date}")
     for row_index, employee in enumerate(employee_data):
         emp_id = employee.get("id")
         emp_url = f"https://nephroplus.keka.com/api/v1/time/attendance?employeeIds={emp_id}&from={start_date}&to={end_date}"
@@ -167,13 +151,10 @@ def get_employee_attendance(employee_data, access_token, start_date=None, end_da
                 result = response.json()
                 employee_attendance_data.extend(result.get("data", []))
             else:
-                print(f"❌ Failed to fetch attendance for {employee.get('employeeNumber')} ({response.status_code})")
+                print(f"❌ Failed to fetch attendance for {employee.get('employeeNumber')}")
         except Exception as e:
             print(f"❌ Error fetching attendance: {e}")
         time.sleep(1.5)
-
-        if (row_index + 1) % 100 == 0:
-            print(f"🔹 Processed {row_index + 1} / {len(employee_data)} employees")
 
     for att in employee_attendance_data:
         employeeNumber = att.get("employeeNumber", "")
@@ -183,11 +164,16 @@ def get_employee_attendance(employee_data, access_token, start_date=None, end_da
             groups = employee_info.get('groups', [])
             group_title = next((g['title'] for g in groups if g.get('groupType') == 3), None)
 
+        #first_name = employee_info.get("firstName", "") if employee_info else ""
+        #last_name = employee_info.get("lastName", "") if employee_info else ""
+        
         first_in = att.get("firstInOfTheDay")
         last_out = att.get("lastOutOfTheDay")
         data_to_write.append([
             att.get("id"),
             employeeNumber,
+            #first_name,
+            #last_name,
             group_title,
             employee_info.get('jobTitle', {}).get('title', '') if employee_info else "",
             att.get("attendanceDate"),
@@ -211,10 +197,7 @@ def get_employee_attendance(employee_data, access_token, start_date=None, end_da
 
     if len(df_template) < rows_needed:
         additional_rows = rows_needed - len(df_template)
-        df_template = pd.concat(
-            [df_template, pd.DataFrame([[''] * columns_count] * additional_rows, columns=df_template.columns)],
-            ignore_index=True
-        )
+        df_template = pd.concat([df_template, pd.DataFrame([['']*columns_count]*additional_rows, columns=df_template.columns)], ignore_index=True)
 
     for i, row_data in enumerate(data_to_write):
         for j, value in enumerate(row_data):
@@ -238,9 +221,9 @@ def main():
     att_access_token = fetch_access_token(api_key_attendance)
 
     if list_access_token and att_access_token:
-        api_response = call_second_api(list_access_token, employee_limit=2500)
+        api_response = call_second_api(list_access_token)
         if api_response:
-            print(f"✅ Fetched employee data: {len(api_response)} employees")
+            print(f"✅ Fetched employee data: {len(api_response)}")
             get_employee_attendance(api_response, att_access_token)
     else:
         print("❌ Failed to obtain access tokens.")
@@ -248,3 +231,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+i want this code to fetch employee attendance details only for 2500 emplyees
